@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/kush/gitli/internal/models"
 	_ "modernc.org/sqlite"
 )
 
@@ -49,6 +50,29 @@ func (db *DB) Close() error {
 
 func (db *DB) Conn() *sql.DB {
 	return db.conn
+}
+
+// UpsertRepository inserts a repository or updates it if it already exists (matched by path).
+func (db *DB) UpsertRepository(repo *models.Repository) (int64, error) {
+	query := `
+		INSERT INTO repositories (name, path, default_branch, last_scanned_at)
+		VALUES (?, ?, ?, datetime('now'))
+		ON CONFLICT(path) DO UPDATE SET
+			name = excluded.name,
+			default_branch = excluded.default_branch,
+			last_scanned_at = datetime('now')
+	`
+	result, err := db.conn.Exec(query, repo.Name, repo.Path, repo.DefaultBranch)
+	if err != nil {
+		return 0, fmt.Errorf("upsert repository: %w", err)
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("get last insert id: %w", err)
+	}
+
+	return id, nil
 }
 
 func (db *DB) autoMigrate() error {
