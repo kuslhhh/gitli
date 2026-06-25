@@ -1,0 +1,22 @@
+# Binaries
+gitli
+gitli.exe
+*.test
+*.out
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependency directories
+vendor/
+
+# Build output
+/dist/
+/build/
