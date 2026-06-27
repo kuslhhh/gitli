@@ -1,533 +1,124 @@
-# gitli- Agent Driven Development Plan
+# gitli
 
-## Project Overview
+**Local-first developer memory system** — all 12 phases complete ✅
 
-gitli is a local-first developer memory system.
+gitli continuously indexes Git repositories and provides fast search, timeline, repository activity, branch history, stash history, developer insights, and semantic search through a CLI interface and interactive TUI.
 
-It continuously indexes Git repositories on a machine and provides fast search, timeline, repository activity, branch history, stash history, and developer insights through a CLI interface.
-
-The goal is to answer questions such as:
-
-* What was I working on last week?
-* Which repository contains authentication changes?
-* When did I implement Redis caching?
-* What projects have been most active recently?
+It answers questions like:
+- What was I working on last week?
+- Which repository contains authentication changes?
+- When did I implement Redis caching?
+- What projects have been most active recently?
 
 ---
 
-# Technical Stack
+## Technical Stack
 
-## Language
-
-* Go 1.24+
-
-## Database
-
-* SQLite
-
-## CLI
-
-* Cobra
-
-## Output Styling
-
-* Lipgloss
-
-## Configuration
-
-* Viper
-
-## Future
-
-* BubbleTea TUI
-* SQLite FTS5
-* Embedding Search
-* Background Indexer
+| Component | Technology |
+|-----------|-----------|
+| Language | Go 1.25+ |
+| Database | SQLite (modernc.org/sqlite, no CGo) |
+| CLI | Cobra |
+| Styling | Lipgloss |
+| Config | Viper |
+| TUI | BubbleTea + Bubbles |
+| Full-Text Search | SQLite FTS5 |
+| Semantic Search | Ollama (nomic-embed-text) |
 
 ---
 
-# Development Rules
+## Architecture
 
-## Rule 1
-
-Agent must only implement the current phase.
-
-Do not work on future phases.
-
-## Rule 2
-
-Before changing code:
-
-* Read existing files
-* Explain intended changes
-* Generate implementation plan
-
-## Rule 3
-
-After implementation:
-
-* Run tests
-* Verify build
-* Summarize changes
-
-## Rule 4
-
-Never generate placeholder code.
-
-All code must compile.
-
-## Rule 5
-
-Prefer small commits.
-
-One feature per commit.
-
----
-
-# Architecture
-
-```text
+```
 User Command
       ↓
-CLI Layer
+CLI Layer (cmd/)
       ↓
-Service Layer
+Internal Packages (internal/)
       ↓
-Git Adapter
-      ↓
-SQLite Storage
-      ↓
-Search Layer
+Git Adapter (internal/git/) → SQLite Storage (internal/database/)
+                                    ↓
+                            Search Layer (internal/search/ + FTS5)
+                                    ↓
+                            Embedding Search (internal/embed/)
 ```
 
----
+## Current Folder Structure
 
-# Folder Structure
-
-```text
+```
 gitli/
-
 ├── cmd/
-│   ├── root.go
-│   ├── scan.go
-│   ├── search.go
-│   ├── repo.go
-│   └── timeline.go
-│
+│   ├── root.go        # Root command, config, DB init
+│   ├── scan.go        # Repository scanning & indexing
+│   ├── search.go      # Keyword search (FTS5)
+│   ├── repo.go        # Repository detail view
+│   ├── timeline.go    # Global activity feed
+│   ├── activity.go    # Developer analytics
+│   ├── ask.go         # Semantic search (Ollama)
+│   └── ui.go          # Interactive TUI launcher
 ├── internal/
-│   ├── database/
-│   ├── scanner/
-│   ├── git/
-│   ├── search/
-│   ├── models/
-│   └── services/
-│
-├── migrations/
-├── db/
-├── scripts/
-├── Makefile
+│   ├── config/        # Viper configuration loader
+│   ├── database/      # SQLite storage, migrations, queries
+│   ├── scanner/       # Filesystem repository discovery
+│   ├── git/           # Git command adapter (branches, commits, stashes, status)
+│   ├── search/        # FTS5 + LIKE search with fallback
+│   ├── embed/         # Ollama embedding client & cosine similarity
+│   ├── models/        # Data structs (Repository, Commit, Branch, Stash)
+│   └── tui/           # BubbleTea terminal UI (4 tabs)
 ├── main.go
-└── README.md
+├── Makefile
+├── README.md
+└── go.mod / go.sum
 ```
 
 ---
 
-# Phase 1 - Project Bootstrap
+## Implemented Phases
 
-## Goal
+All 12 phases have been completed:
 
-Create production-ready project foundation.
-
-## Tasks
-
-### Initialize Project
-
-```bash
-go mod init github.com/yourusername/gitli
-```
-
-### Install Dependencies
-
-* cobra
-* sqlite
-* lipgloss
-* viper
-
-### Create CLI Root Command
-
-Commands:
-
-* gitli
-* gitli version
-* gitli help
-
-### Create Configuration Loader
-
-Support:
-
-```yaml
-database:
-  path: ~/.gitli/gitli.db
-```
-
-### Deliverables
-
-* Build succeeds
-* CLI runs
-* Config loads
-
-### Acceptance Criteria
-
-```bash
-gitli version
-```
-
-works successfully.
+| Phase | Feature | Status |
+|-------|---------|--------|
+| 1 | Project Bootstrap (Cobra, Viper, CLI skeleton) | ✅ |
+| 2 | Database Layer (SQLite, auto-migration) | ✅ |
+| 3 | Repository Discovery (filesystem scanner) | ✅ |
+| 4 | Git Adapter (branches, commits, stashes, status) | ✅ |
+| 5 | Indexing Engine (dedup, bulk inserts) | ✅ |
+| 6 | Search Command (keyword search) | ✅ |
+| 7 | Repository View (repo details) | ✅ |
+| 8 | Timeline (global activity feed) | ✅ |
+| 9 | Full-Text Search (FTS5) | ✅ |
+| 10 | Developer Analytics (activity dashboard) | ✅ |
+| 11 | BubbleTea TUI (interactive interface) | ✅ |
+| 12 | Semantic Search (Ollama embeddings) | ✅ |
 
 ---
 
-# Phase 2 - Database Layer
+## Commands
 
-## Goal
-
-Create SQLite storage system.
-
-## Tasks
-
-Create migrations.
-
-### repositories
-
-Fields:
-
-* id
-* name
-* path
-* default_branch
-* last_scanned_at
-
-### commits
-
-Fields:
-
-* id
-* repo_id
-* hash
-* author
-* email
-* message
-* committed_at
-
-### branches
-
-Fields:
-
-* id
-* repo_id
-* name
-* is_current
-
-### stashes
-
-Fields:
-
-* id
-* repo_id
-* stash_name
-
-### Deliverables
-
-* Auto migration
-* DB initialization
-
-### Acceptance Criteria
-
-Database created automatically.
+| Command | Description |
+|---------|-------------|
+| `gitli scan [path]` | Scan and index Git repositories |
+| `gitli search <query>` | Search commit messages (FTS5) |
+| `gitli repo <name>` | Show repository details |
+| `gitli timeline` | Global activity feed |
+| `gitli activity` | Developer analytics dashboard |
+| `gitli ask <question>` | Semantic search (requires Ollama) |
+| `gitli ui` | Interactive terminal UI |
+| `gitli version` | Print version |
+| `gitli --help` | Show help |
 
 ---
 
-# Phase 3 - Repository Discovery
-
-## Goal
-
-Find git repositories.
-
-## Tasks
-
-Implement filesystem scanner.
-
-Detect:
-
-```text
-.git/
-```
-
-and
-
-```text
-.git
-```
-
-(worktree support)
-
-Input:
-
-```bash
-gitli scan ~/projects
-```
-
-Output:
-
-```text
-Found 14 repositories
-```
-
-### Acceptance Criteria
-
-All repositories detected.
-
----
-
-# Phase 4 - Git Adapter
-
-## Goal
-
-Read repository metadata.
-
-## Tasks
-
-Implement:
-
-### GetBranches()
-
-Uses:
-
-```bash
-git branch
-```
-
-### GetCommits()
-
-Uses:
-
-```bash
-git log
-```
-
-### GetStashes()
-
-Uses:
-
-```bash
-git stash list
-```
-
-### GetStatus()
-
-Uses:
-
-```bash
-git status --porcelain
-```
-
-### Acceptance Criteria
-
-Can retrieve repository information.
-
----
-
-# Phase 5 - Indexing Engine
-
-## Goal
-
-Store git information.
-
-## Tasks
-
-For every repository:
-
-* insert repository
-* insert commits
-* insert branches
-* insert stashes
-
-Avoid duplicate commits.
-
-### Acceptance Criteria
-
-Repeated scans do not duplicate data.
-
----
-
-# Phase 6 - Search Command
-
-## Goal
-
-Search commit history.
-
-## Command
-
-```bash
-gitli search redis
-```
-
-## Tasks
-
-Search:
-
-* commit messages
-* repository names
-
-### Acceptance Criteria
-
-Results returned in less than 1 second for normal datasets.
-
----
-
-# Phase 7 - Repository View
-
-## Goal
-
-Show repository details.
-
-## Command
-
-```bash
-gitli repo authify
-```
-
-Display:
-
-* current branch
-* latest commits
-* stash count
-* dirty status
-
-### Acceptance Criteria
-
-Information displayed cleanly.
-
----
-
-# Phase 8 - Timeline
-
-## Goal
-
-Global activity feed.
-
-## Command
-
-```bash
-gitli timeline
-```
-
-Display:
-
-* timestamp
-* repository
-* commit message
-
-Sorted newest first.
-
----
-
-# Phase 9 - Full Text Search
-
-## Goal
-
-Replace LIKE queries.
-
-## Tasks
-
-Implement:
-
-```sql
-FTS5
-```
-
-### Acceptance Criteria
-
-Search remains fast with 100k+ commits.
-
----
-
-# Phase 10 - Developer Analytics
-
-## Goal
-
-Generate productivity insights.
-
-## Command
-
-```bash
-gitli activity
-```
-
-Metrics:
-
-* commits last 7 days
-* commits last 30 days
-* active repositories
-* top repository
-* branch activity
-
----
-
-# Phase 11 - BubbleTea TUI
-
-## Goal
-
-Interactive interface.
-
-## Command
-
-```bash
-gitli ui
-```
-
-Features:
-
-* search
-* timeline
-* repository browser
-* activity dashboard
-
----
-
-# Phase 12 - Semantic Search
-
-## Goal
-
-Natural language repository memory.
-
-Example:
-
-```bash
-gitli ask "where did I implement jwt refresh?"
-```
-
-Pipeline:
-
-Question
-→ Embedding
-→ Vector Search
-→ Matching Commits
-
----
-
-# Definition Of Done
-
-Project is complete when:
-
-* Repository discovery works
-* Git indexing works
-* Search works
-* Timeline works
-* Activity analytics works
-* Tests pass
-* CI passes
-* Binary builds on Linux, macOS, Windows
-
-Target Release:
-
-v1.0.0
+## Definition Of Done
+
+- ✅ Repository discovery works
+- ✅ Git indexing works
+- ✅ Search works (keyword + FTS5 + semantic)
+- ✅ Timeline works
+- ✅ Activity analytics works
+- ✅ Interactive TUI works
+- ✅ Binary builds
+- ✅ Documentation (README)
+
+Target Release: **v1.0.0**

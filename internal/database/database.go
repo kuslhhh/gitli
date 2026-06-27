@@ -2,9 +2,12 @@ package database
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/kush/gitli/internal/models"
@@ -419,6 +422,132 @@ func (db *DB) getBranchCounts() []BranchCount {
 	return branches
 }
 
+// EmbeddingMatch represents a commit matched by semantic search.
+type EmbeddingMatch struct {
+	TimelineEntry
+	Score float64
+}
+
+// StoreEmbedding stores or updates an embedding for a commit.
+func (db *DB) StoreEmbedding(commitID int64, embedding []float64, model string) error {
+	data, err := json.Marshal(embedding)
+	if err != nil {
+		return fmt.Errorf("marshal embedding: %w", err)
+	}
+
+	_, err = db.conn.Exec(`
+		INSERT INTO commit_embeddings (commit_id, embedding, model)
+		VALUES (?, ?, ?)
+		ON CONFLICT(commit_id) DO UPDATE SET
+			embedding = excluded.embedding,
+			model = excluded.model
+	`, commitID, string(data), model)
+	return err
+}
+
+// SearchByEmbedding finds the most similar commits to a query embedding.
+func (db *DB) SearchByEmbedding(query []float64, limit int) ([]EmbeddingMatch, error) {
+	rows, err := db.conn.Query(`
+		SELECT ce.commit_id, ce.embedding,
+			c.hash, c.author, c.email, c.message, c.committed_at,
+			r.name, r.path
+		FROM commit_embeddings ce
+		JOIN commits c ON c.id = ce.commit_id
+		JOIN repositories r ON r.id = c.repo_id
+		ORDER BY c.committed_at DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query embeddings: %w", err)
+	}
+	defer rows.Close()
+
+	type row struct {
+		commitID   int64
+		embedding  string
+		hash       string
+		author     string
+		email      string
+		message    string
+		committedAt string
+		repoName   string
+		repoPath   string
+	}
+
+	var rowsData []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.commitID, &r.embedding, &r.hash, &r.author, &r.email, &r.message, &r.committedAt, &r.repoName, &r.repoPath); err != nil {
+			return nil, fmt.Errorf("scan embedding row: %w", err)
+		}
+		rowsData = append(rowsData, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	type scored struct {
+		row
+		score float64
+	}
+
+	var scoredRows []scored
+	for _, r := range rowsData {
+		var vec []float64
+		if err := json.Unmarshal([]byte(r.embedding), &vec); err != nil {
+			continue
+		}
+		score := cosineSimilarity(query, vec)
+		if score > 0.3 { // minimum similarity threshold
+			scoredRows = append(scoredRows, scored{r, score})
+		}
+	}
+
+	sort.Slice(scoredRows, func(i, j int) bool {
+		return scoredRows[i].score > scoredRows[j].score
+	})
+
+	if limit > len(scoredRows) {
+		limit = len(scoredRows)
+	}
+	scoredRows = scoredRows[:limit]
+
+	results := make([]EmbeddingMatch, len(scoredRows))
+	for i, sr := range scoredRows {
+		results[i] = EmbeddingMatch{
+			TimelineEntry: TimelineEntry{
+				Commit: models.Commit{
+					Hash:    sr.hash,
+					Author:  sr.author,
+					Email:   sr.email,
+					Message: sr.message,
+				},
+				RepoName: sr.repoName,
+				RepoPath: sr.repoPath,
+			},
+			Score: sr.score,
+		}
+		results[i].CommittedAt, _ = parseTime(sr.committedAt)
+	}
+
+	return results, nil
+}
+
+func cosineSimilarity(a, b []float64) float64 {
+	if len(a) != len(b) {
+		return 0
+	}
+	var dot, normA, normB float64
+	for i := range a {
+		dot += a[i] * b[i]
+		normA += a[i] * a[i]
+		normB += b[i] * b[i]
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
+}
+
 func (db *DB) autoMigrate() error {
 	migrations := []string{
 		`CREATE TABLE IF NOT EXISTS repositories (
@@ -487,11 +616,21 @@ func (db *DB) autoMigrate() error {
 	var count int
 	db.conn.QueryRow("SELECT COUNT(*) FROM commits_fts").Scan(&count)
 	if count == 0 {
-		// Allow failure — FTS might be empty because no commits exist yet
 		db.conn.Exec(`
 			INSERT INTO commits_fts(rowid, message, author, email)
 			SELECT id, message, author, email FROM commits
 		`)
+	}
+
+	// Create embeddings table (separately so it doesn't break if FTS5 isn't available)
+	if _, err := db.conn.Exec(`CREATE TABLE IF NOT EXISTS commit_embeddings (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		commit_id INTEGER NOT NULL UNIQUE,
+		embedding TEXT NOT NULL,
+		model TEXT NOT NULL DEFAULT 'nomic-embed-text',
+		FOREIGN KEY (commit_id) REFERENCES commits(id) ON DELETE CASCADE
+	)`); err != nil {
+		return fmt.Errorf("create embeddings table: %w", err)
 	}
 
 	return nil

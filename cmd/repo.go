@@ -32,7 +32,7 @@ Accepts a repository name (partial match, case-insensitive).`,
 		label := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
 		green := lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 		yellow := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	hashStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
+		hashStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
 		msgStyle := lipgloss.NewStyle().Padding(0, 0, 0, 2)
 		metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Padding(0, 0, 0, 2)
 

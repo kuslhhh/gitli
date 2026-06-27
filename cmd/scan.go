@@ -3,6 +3,8 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/kush/gitli/internal/embed"
 	"github.com/kush/gitli/internal/git"
 	"github.com/kush/gitli/internal/scanner"
 	"github.com/spf13/cobra"
@@ -18,11 +20,22 @@ var scanCmd = &cobra.Command{
 			path = args[0]
 		}
 
+		subtle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+
 		fmt.Println("Scanning:", path)
 
 		results, err := scanner.Scan(path)
 		if err != nil {
 			return fmt.Errorf("scan failed: %w", err)
+		}
+
+		// Check Ollama availability once for embedding generation
+		embedder := embed.New("", "")
+		ollamaAvailable := embedder.IsAvailable()
+		if ollamaAvailable {
+			fmt.Println(subtle.Render("  Ollama detected — will generate semantic embeddings"))
+		} else {
+			fmt.Println(subtle.Render("  Ollama not available — skipping semantic embeddings"))
 		}
 
 		for _, r := range results {
@@ -62,6 +75,36 @@ var scanCmd = &cobra.Command{
 				return fmt.Errorf("store commits %s: %w", r.Path, err)
 			}
 			fmt.Printf("    commits: %d new, %d total\n", cCount, len(commits))
+
+			// Generate semantic embeddings for new commits
+			if cCount > 0 && ollamaAvailable {
+				fmt.Printf("    embeddings: generating...\n")
+				eCount := 0
+				for _, c := range commits {
+					var commitID int64
+					err := db.Conn().QueryRow(
+						"SELECT id FROM commits WHERE repo_id = ? AND hash = ?",
+						repoID, c.Hash,
+					).Scan(&commitID)
+					if err != nil {
+						continue
+					}
+
+					text := c.Message
+					vec, err := embedder.Embed(text)
+					if err != nil {
+						continue
+					}
+
+					if err := db.StoreEmbedding(commitID, vec, embed.DefaultModel); err != nil {
+						continue
+					}
+					eCount++
+				}
+				if eCount > 0 {
+					fmt.Printf("    embeddings: %d generated\n", eCount)
+				}
+			}
 
 			// Index stashes
 			stashes, err := git.GetStashes(r.Path)
